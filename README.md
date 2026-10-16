@@ -1,52 +1,54 @@
-# ctx — контекст проекта для LLM
+# ctx — Project Context for LLMs
 
-Утилита собирает согласованный снимок исходников, ведёт ревизии с content-addressable blobs и помогает безопасно применять изменения, предложенные моделью.
+[Читать на русском языке](README.ru.md)
 
-Поддерживаемые языки (через плагины): **C++**, **Python**, **JavaScript/TypeScript**, а также (при подключении доп. плагинов) Rust, Go, C#, Java, Kotlin, Swift.
+A utility that captures a consistent snapshot of source files, maintains revisions using content-addressable blobs, and helps safely apply model-proposed changes.
 
----
-
-## Оглавление
-
-1. [Зачем это нужно](#1-зачем-это-нужно)
-2. [Сборка](#2-сборка)
-3. [Основные понятия](#3-основные-понятия)
-4. [Два режима работы с моделью](#4-два-режима-работы-с-моделью)
-5. [Базовый workflow (чат / удалённая модель)](#5-базовый-workflow-чат--удалённая-модель)
-6. [Workflow с локальной моделью](#6-workflow-с-локальной-моделью)
-7. [Справочник команд](#7-справочник-команд)
-8. [Формат ChangeProposal](#8-формат-changeproposal)
-9. [Формат контекста (XML / JSON)](#9-формат-контекста-xml--json)
-10. [Хранилище `.ctx/`](#10-хранилище-ctx)
-11. [Типичные сценарии](#11-типичные-сценарии)
-12. [Рекомендации и ограничения](#12-рекомендации-и-ограничения)
+Supported languages (via plugins): **C++**, **Python**, **JavaScript/TypeScript**, as well as (by connecting additional plugins) Rust, Go, C#, Java, Kotlin, Swift.
 
 ---
 
-## 1. Зачем это нужно
+## Table of Contents
 
-При работе с LLM типичные проблемы:
+1. [Why Use It](#1-why-use-it)
+2. [Building](#2-building)
+3. [Core Concepts](#3-core-concepts)
+4. [Two Modes of Operation with a Model](#4-two-modes-of-operation-with-a-model)
+5. [Basic Workflow (Chat / Remote Model)](#5-basic-workflow-chat--remote-model)
+6. [Workflow with a Local Model](#6-workflow-with-a-local-model)
+7. [Command Reference](#7-command-reference)
+8. [ChangeProposal Format](#8-changeproposal-format)
+9. [Context Format (XML / JSON)](#9-context-format-xml--json)
+10. [The `.ctx/` Storage](#10-the-ctx-storage)
+11. [Typical Scenarios](#11-typical-scenarios)
+12. [Best Practices and Limitations](#12-best-practices-and-limitations)
 
-| Проблема | Как ctx помогает |
+---
+
+## 1. Why Use It
+
+Typical issues when working with LLMs:
+
+| Problem | How ctx Helps |
 |----------|------------------|
-| Модель не видит весь проект | Собирает релевантные файлы (полный снимок или delta) |
-| Модель думает про устаревший код | Ревизии + `base_revision` в proposal |
-| Непонятно, что изменилось | `scan`, `diff`, блок changes |
-| Патч «вслепую» ломает файлы | `apply` с проверкой хэша |
-| Сессия чата оборвалась | `context --rev N` восстанавливает снимок из blobs |
-| Слишком много токенов | `--entry`, `--headers-only`, delta-режим |
+| Model cannot see the whole project | Gathers relevant files (full snapshot or delta) |
+| Model reasons about outdated code | Revisions + `base_revision` checked in the proposal |
+| Unclear what actually changed | Run `scan`, `diff`, or inspect the changes block |
+| "Blind" patching corrupts files | Runs `apply` with mandatory hash validation |
+| Chat session timed out or broke | Run `context --rev N` to rebuild the snapshot from blobs |
+| Token limit exceeded | Use `--entry`, `--headers-only`, or delta mode |
 
 ---
 
-## 2. Сборка
+## 2. Building
 
 ```bash
 cd collect_ctx
 make
-# бинарник: ./ctx
+# binary output: ./ctx
 ```
 
-Или вручную:
+Or manually:
 
 ```bash
 g++ -std=c++17 -O2 \
@@ -60,80 +62,80 @@ g++ -std=c++17 -O2 \
 
 ---
 
-## 3. Основные понятия
+## 3. Core Concepts
 
-### Ревизия
+### Revision
 
-Зафиксированное состояние проекта после `ctx record`. Номер хранится в `.ctx/revision`.
+A recorded state of the project after running `ctx record`. The current revision number is kept in `.ctx/revision`.
 
 ### Manifest
 
-Таблица `path → hash` всех исходников. Есть:
+A `path → hash` lookup table of all source files. It exists in two forms:
 
-- `.ctx/manifest` — **текущее** зафиксированное дерево
-- `.ctx/revs/N.manifest` — дерево **конкретной** ревизии N
+- `.ctx/manifest` — the **currently** recorded tree
+- `.ctx/revs/N.manifest` — the tree for a **specific** revision N
 
 ### Blob
 
-Содержимое файла, адресуемое по хэшу (FNV-1a 64-bit). Лежит в `.ctx/objects/ab/hash…`.
-Неизменившиеся файлы между ревизиями **шарят один blob**.
+File contents addressed entirely by their hash (FNV-1a 64-bit). Stored under `.ctx/objects/ab/hash…`.
+Files that do not change between revisions **share the same blob**.
 
 ### Delta
 
-В контекст попадают только **новые и изменённые** файлы относительно последнего манифеста. Полный список путей и хэшей всё равно есть в манифесте.
+In delta mode, the context captures only **new and modified** files relative to the latest manifest. The complete list of paths and hashes is still present in the manifest summary.
 
 ### ChangeProposal
 
-JSON-файл с предложенными изменениями от модели: какие файлы заменить/создать/удалить, от какой ревизии, с каким ожидаемым старым хэшем.
+A JSON file containing the changes proposed by the model: which files to replace, create, or delete, relative to which base revision, and with what expected old hash.
 
 ---
 
-## 4. Два режима работы с моделью
+## 4. Two Modes of Operation with a Model
 
-Важно различать, **как** модель связана с вашим диском.
+It is essential to distinguish **how** the model is connected to your local disk.
 
-### A. Чат / удалённый API
+### A. Chat / Remote API
 
-(Grok, ChatGPT, Claude в браузере, API без доступа к файловой системе)
+(Grok, ChatGPT, Claude in the browser, or an API without filesystem access)
 
-Модель **не может** писать файлы на ваш компьютер. Она только генерирует текст.
-
-```
-вы  ── ctx context ──►  файл контекста  ──►  модель
-модель  ──►  текст / JSON proposal  ──►  вы сохраняете proposal.json
-вы  ── ctx apply proposal.json ──►  диск
-вы  ── ctx record -m "…" ──►  новая ревизия
-```
-
-Здесь `apply` — контролируемый способ перенести ответ модели на диск с проверками (`base_revision`, `expected_old_hash`).
-
-### B. Локальная модель с доступом к файлам
-
-(Cursor agent, Continue, Aider, свой агент с tool-calling, LLM + MCP filesystem и т.п.)
-
-Модель **может** сама читать и писать файлы. Тогда:
-
-- `ctx` полезен как **источник истины** (ревизии, diff, история);
-- `apply` не обязателен — агент пишет напрямую;
-- после правок агента стоит делать `ctx record`, чтобы зафиксировать состояние.
+The model **cannot** write files directly to your machine. It only generates text output.
 
 ```
-агент читает/правит файлы сам
+you  ── ctx context ──►  context file  ──►  model
+model  ──►  text / JSON proposal  ──►  you save proposal.json
+you  ── ctx apply proposal.json ──►  disk
+you  ── ctx record -m "…" ──►  new revision
+```
+
+Here, `apply` acts as a controlled way to apply the model's response to your disk with rigorous checks (`base_revision`, `expected_old_hash`).
+
+### B. Local Model with Filesystem Access
+
+(Cursor agent, Continue, Aider, a custom tool-calling agent, an LLM + MCP filesystem, etc.)
+
+The model **can** read and write files on its own. In this setup:
+
+- `ctx` is useful as a **source of truth** (revisions, diffs, history);
+- `apply` is optional since the agent modifies files directly;
+- you should run `ctx record` after the agent finishes its edits to commit the state.
+
+```
+agent reads/edits files directly
         │
         ▼
-ctx scan          # что изменилось?
-ctx record -m "…" # зафиксировать
-ctx context       # согласованный снимок для другой сессии / модели
+ctx scan          # what changed?
+ctx record -m "…" # commit state
+ctx context       # consistent snapshot for another session / model
 ```
 
-**Итог:** фраза «модель не пишет на диск» относится к **чату и удалённому API**.  
-Локальный агент с tools пишет сам; `ctx` в этом случае про историю и согласованность, а не про единственный канал записи.
+**Summary:** the phrase "the model does not write to disk" applies strictly to **chats and remote APIs**.  
+A local agent with tools writes directly; in that case, `ctx` ensures history and consistency rather than acting as the sole write channel.
 
 ---
 
-## 5. Базовый workflow (чат / удалённая модель)
+## 5. Basic Workflow (Chat / Remote Model)
 
-### Первый раз
+### First-time Setup
 
 ```bash
 cd /path/to/your/project
@@ -142,108 +144,110 @@ ctx record -m "Initial snapshot"
 ctx context --full -o task.json
 ```
 
-Отправьте `task.json` (или `.xml`) в чат вместе с задачей, например:
+Send `task.json` (or `.xml`) to the chat along with your prompt, for example:
 
-> Вот контекст проекта (ревизия в summary).  
-> Нужно: …  
-> Верни изменения строго в формате ChangeProposal JSON.
+> Here is the project context (the exact revision is in the summary).  
+> Task: …  
+> Return the changes strictly in the ChangeProposal JSON format.
 
-## Дальше по циклу
-# правки в коде...
+### Regular Cycle
+```bash
+# make some code changes...
 ctx scan
 ctx record -m "Fix something"
-ctx context -o task.json           # только delta — нормально
+ctx context -o task.json           # delta mode is perfectly fine here
+```
 
-### Итерация
+### Iteration
 
 ```bash
-# 1. Модель прислала proposal — сохранили в proposal.json
+# 1. The model provided a proposal — save it to proposal.json
 ctx apply proposal.json
 
-# 2. Проверили глазами / тестами
-# 3. Зафиксировали
+# 2. Verify changes manually / run tests
+# 3. Commit the state
 ctx record -m "Fix resource reload"
 
-# 4. Новый контекст для следующей итерации (обычно delta)
+# 4. Generate a new context for the next iteration (usually a delta)
 ctx context -o task.json
 ```
 
-### Если модель «забыла» сессию
+### Resuming an Interrupted Session
 
 ```bash
 ctx context --rev 5 -o resume.json
 ```
 
-Полный снимок **как в ревизии 5**, из blobs — даже если рабочее дерево уже ушло вперёд.
+This generates a full snapshot **exactly as it was in revision 5** from blobs, even if your working directory has moved far ahead.
 
-### Если proposal от старой ревизии
+### Handling an Outdated Proposal
 
 ```text
-Отказ: proposal от r3, текущая ревизия r7
+Rejected: proposal is for r3, current revision is r7
 ```
 
-Варианты:
+Your options:
 
-1. `ctx context --rev 3 -o old.json` — дать модели снимок её ревизии и попросить proposal заново;
-2. вручную поправить `base_revision` (рискованно);
-3. восстановить нужные файлы из blobs через `ctx show` и повторить.
+1. `ctx context --rev 3 -o old.json` — provide the model with the exact snapshot of the revision it used and ask it to regenerate the proposal;
+2. manually update `base_revision` in the JSON (risky);
+3. restore the required files from blobs via `ctx show` and try again.
 
 ---
 
-## 6. Workflow с локальной моделью
+## 6. Workflow with a Local Model
 
 ```bash
 ctx init
 ctx record -m "Start"
 
-# … агент правит код через tools …
+# … agent modifies the code via tools …
 
 ctx scan
 ctx record -m "Agent: add JWT auth"
-ctx context -o handoff.json   # другой модели / человеку
+ctx context -o handoff.json   # hand off to another model or developer
 ```
 
-| Цель | Команда |
+| Goal | Command |
 |------|---------|
-| Что изменилось с last record | `ctx scan` |
-| Зафиксировать точку | `ctx record -m "…"` |
-| Сравнить две точки | `ctx diff r4 r7` |
-| Старая версия файла | `ctx show r4 path/to/file.py` |
-| Контекст вокруг модуля | `ctx context --entry src/main.py -o m.json` |
+| See changes since the last record | `ctx scan` |
+| Save a checkpoint | `ctx record -m "…"` |
+| Compare two checkpoints | `ctx diff r4 r7` |
+| View an old version of a file | `ctx show r4 path/to/file.py` |
+| Context narrowed down to a module | `ctx context --entry src/main.py -o m.json` |
 
-`apply` здесь опционален: полезен, если локальная модель по промпту всё равно отдаёт proposal-файлом, а не пишет через tools.
+`apply` is optional here: it remains useful if the local model still returns a proposal file via prompt instead of writing directly through tools.
 
 ---
 
-## 7. Справочник команд
+## 7. Command Reference
 
 ```text
-ctx init [path]                 Создать .ctx/
-ctx scan [path]                 Изменения vs последняя ревизия
-ctx record -m "msg" [path]      Новая ревизия + blobs
-ctx history [path] [-n N]       Журнал ревизий
-ctx show <rev> [path]           Файл или список файлов ревизии
-ctx diff <revA> <revB> [path]   Сравнение ревизий
-ctx context [path] [opts]       Собрать контекст для LLM
-ctx apply <proposal.json>       Применить proposal (локально, без сети)
-ctx deps <file> [path]          Транзитивные зависимости по импортам
+ctx init [path]                 Create .ctx/ directory
+ctx scan [path]                 Show modifications vs latest revision
+ctx record -m "msg" [path]      Create a new revision + store blobs
+ctx history [path] [-n N]       Show revision log
+ctx show <rev> [path]           View a file or file list from a revision
+ctx diff <revA> <revB> [path]   Compare two revisions
+ctx context [path] [opts]       Assemble context package for LLM
+ctx apply <proposal.json>       Apply a proposal locally (offline)
+ctx deps <file> [path]          Trace transitive import dependencies
 ctx help
 ```
 
-### Опции `context`
+### `context` Options
 
-| Опция | Смысл |
+| Option | Description |
 |-------|--------|
-| `-o, --output FILE` | Куда писать |
-| `--format xml\|json` | Формат (иначе по расширению `.json` → json) |
-| `--rev N` | Снимок из blobs ревизии N, не с диска |
-| `--entry FILE` | Только файл + зависимости по импортам |
-| `--headers-only` | Только интерфейсы (`.h`, `.pyi`, `.d.ts`, …) |
-| `--full` | Полный снимок, игнорировать delta |
+| `-o, --output FILE` | Destination output file |
+| `--format xml\|json` | Explicit format choice (defaults by extension, e.g., `.json` → json) |
+| `--rev N` | Reconstruct snapshot from revision N blobs instead of using the disk |
+| `--entry FILE` | Include only this file and its tracked import dependencies |
+| `--headers-only` | Include interface definitions only (`.h`, `.pyi`, `.d.ts`, etc.) |
+| `--full` | Force a full snapshot, bypassing delta mode |
 
 ---
 
-## 8. Формат ChangeProposal
+## 8. ChangeProposal Format
 
 ```json
 {
@@ -253,7 +257,7 @@ ctx help
       "operation": "replace_file",
       "path": "world/world_loader.py",
       "expected_old_hash": "a1b2c3d4e5f60708",
-      "content": "полный новый текст файла\n"
+      "content": "full new file content here\n"
     },
     {
       "operation": "create_file",
@@ -272,85 +276,85 @@ ctx help
 }
 ```
 
-| Поле | Назначение |
+| Field | Purpose |
 |------|------------|
-| `base_revision` | Ревизия, от которой считала модель. `apply` откажет, если текущая другая |
-| `expected_old_hash` | Хэш файла **до** правки. Защита от параллельных изменений |
+| `base_revision` | The revision the model used for calculations. `apply` will fail if the current disk revision differs |
+| `expected_old_hash` | Hash of the file **before** modification. Guards against concurrent edits |
 | `operation` | `replace_file` \| `create_file` \| `delete_file` |
-| `path` | Относительный путь (без `..` и абсолютных путей) |
-| `rationale` | Зачем меняли |
+| `path` | Relative path (forbids `..` and absolute paths) |
+| `rationale` | Explanation of why the changes were made |
 
-`apply` **не** вызывает `record` — после проверки сделайте `ctx record -m "…"`.
+`apply` **does not** automatically trigger `record` — run `ctx record -m "…"` manually after reviewing.
 
-Сеть для `apply` **не нужна**: proposal — обычный локальный файл.
-
----
-
-## 9. Формат контекста (XML / JSON)
-
-Одинаковая структура, разная сериализация.
-
-- **summary** — mode (`full`/`delta`), revision, parent/base_revision, root, счётчики
-- **languages** — сколько файлов какого языка
-- **changes** — added / modified / deleted
-- **hash_manifest** — все path+hash проекта
-- **project_structure** — список путей
-- **files** — содержимое только включённых в этот пакет файлов
-
-В delta-режиме в `files` мало объектов, но манифест полный: модель видит «что ещё есть», не таща все тела файлов.
+Network access is **not required** for `apply`: the proposal is just a local file.
 
 ---
 
-## 10. Хранилище `.ctx/`
+## 9. Context Format (XML / JSON)
+
+Identical data structure, different serialization flavors.
+
+- **summary** — mode (`full`/`delta`), revision, parent/base_revision, root directory, metrics
+- **languages** — count of files grouped by language
+- **changes** — tracked additions / modifications / deletions
+- **hash_manifest** — a complete project-wide mapping of paths to hashes
+- **project_structure** — flat list of directory paths
+- **files** — literal contents of the files included in this specific package
+
+In delta mode, `files` contains very few objects, but the manifest remains complete: the model can see "what else exists" without pulling massive file bodies.
+
+---
+
+## 10. The `.ctx/` Storage
 
 ```text
 .ctx/
-├── revision            # число текущей ревизии
-├── manifest            # path<TAB>hash  (последний record)
-├── history.jsonl       # по строке на ревизию + reason
+├── revision            # Current revision number
+├── manifest            # path<TAB>hash mapping (from the latest record)
+├── history.jsonl       # Line-by-line revision logs with reason strings
 ├── revs/
 │   ├── 1.manifest
 │   └── 2.manifest
 └── objects/
     └── a1/
-        └── a1b2c3…     # blob содержимого
+        └── a1b2c3…     # Content-addressable blob
 ```
 
-Обычно `.ctx/` не коммитят в git (или коммитят осознанно).  
-Выходные `task.json` / `ctx.xml` лучше добавить в `.gitignore`.
+Typically, `.ctx/` is excluded from git (unless committed intentionally).  
+Generated output files like `task.json` / `ctx.xml` should be added to your `.gitignore`.
 
-Игнор исходников: `.ctxignore` в корне (+ встроенные `node_modules`, `__pycache__`, `.git`, `.ctx`, …).
+Excluding source files: Create a `.ctxignore` file in the root directory (built-in defaults include `node_modules`, `__pycache__`, `.git`, `.ctx`, etc.).
 
 ---
 
-## 11. Типичные сценарии
+## 11. Typical Scenarios
 
-### Один модуль + зависимости
+### Target a Single Module with Dependencies
 
 ```bash
 ctx context --entry engine/game_engine.py -o engine.json
 ```
 
-### Только интерфейсы
+### Export Interfaces Only
 
 ```bash
 ctx context --headers-only -o api.xml
 ```
 
-### Что сделал агент с прошлого record
+### Check Agent Progress Since Last Record
 
 ```bash
 ctx scan
 ```
 
-### Откат файла к старой ревизии
+### Revert a File to an Older Revision
 
 ```bash
 ctx show r5 world/world_loader.py > world/world_loader.py
 ctx record -m "Revert world_loader to r5"
 ```
 
-### Передача другой модели снимка r8
+### Pass a Specific Revision Checkpoint (r8) to a Different Model
 
 ```bash
 ctx context --rev 8 -o for_other_model.json
@@ -358,48 +362,48 @@ ctx context --rev 8 -o for_other_model.json
 
 ---
 
-## 12. Рекомендации и ограничения
+## 12. Best Practices and Limitations
 
-**Стоит**
+**Do's**
 
-- `record` после каждого осмысленного куска работы
-- В `-m` писать **зачем**, не только «update»
-- Для чата просить ChangeProposal с `base_revision` и хэшами из контекста
-- После `apply` — тесты, потом `record`
+- Run `record` after completing any logical chunk of work
+- Use the `-m` flag to describe **why** changes were made, not just generic "updates"
+- Instruct chat models to format responses as a ChangeProposal using `base_revision` and hashes from the context
+- Run your test suite after an `apply` before executing a `record`
 
-**Не стоит ждать**
+**Don't Expect**
 
-- Semantic analysis (типы, overload) — только файлы + импорты
-- Резолва nuget/maven/crates.io/stdlib — только дерево проекта
-- Автоmerge при конфликте хэшей — `apply` откажется намеренно
+- Deep semantic analysis (type checking, overload resolution) — it maps files and literal imports
+- Package manager resolution (nuget, maven, crates.io, stdlib) — it tracks the project directory tree only
+- Auto-merging during hash conflicts — `apply` intentionally rejects conflicting files
 
-**Сеть**
+**Network Requirements**
 
-- Сама утилита `ctx` в сеть **не ходит**
-- Сеть нужна только клиенту LLM (браузер, API)
-- `apply`, `record`, `show`, `diff` — всегда локальные
+- The `ctx` utility operates **completely offline**
+- Network connectivity is only utilized by your LLM client (browser, API layer)
+- Commands like `apply`, `record`, `show`, and `diff` are strictly local
 
 ---
 
-## Быстрая шпаргалка
+## Quick Cheat Sheet
 
 ```bash
-# старт
+# Initialize and start
 ctx init
 ctx record -m "Initial"
 
-# отдать в чат
+# Package context for a chat model
 ctx context -o task.json
 
-# принять ответ модели (чат / без доступа к диску)
+# Apply model response (chat / remote workflows)
 ctx apply proposal.json
-ctx record -m "Описание изменения"
+ctx record -m "Describe the applied change"
 
-# агент уже поправил файлы сам
+# When an agent has already edited files directly
 ctx scan
 ctx record -m "Agent: …"
 
-# история
+# Navigation and history
 ctx history
 ctx show r3 path/file.py
 ctx diff r2 r5

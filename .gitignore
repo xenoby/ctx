@@ -60,6 +60,7 @@ cmake-build-debug/
 cmake-build-release/
 cmake-build-*/
 # Visual Studio specific files
+.vs/
 *.vcxproj
 *.vcxproj.filters
 *.sln
