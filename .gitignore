@@ -1,0 +1,71 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# debug information files
+*.dwo
+
+# CMake-specific build artifacts
+[Cc]MakeFiles/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+_CPack_Packages/
+DartConfiguration.tcl
+Testing/
+.cmake/
+# Match files like compile_commands.json, etc.
+build/
+bin/
+lib/
+# Common build directory names
+cmake-build-debug/
+cmake-build-release/
+cmake-build-*/
+# Visual Studio specific files
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.suo
+*.user
+*.config
+# Xcode specific files
+*.xcodeproj
+*.xcworkspace

@@ -1,0 +1,6 @@
+# Example .ctxignore
+third_party/
+*.o
+*.obj
+build/
+dist/
