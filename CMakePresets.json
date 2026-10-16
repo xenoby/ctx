@@ -1,0 +1,56 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 19,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "mingw-debug",
+      "displayName": "MinGW Debug",
+      "description": "Debug build for ctx CLI using MinGW",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-debug",
+      "environment": {
+        "PROJECT_CUSTOM_NAME": "ctx_debug"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "mingw-release",
+      "displayName": "MinGW Release",
+      "description": "Release build for ctx CLI using MinGW",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build-release",
+      "environment": {
+        "PROJECT_CUSTOM_NAME": "ctx"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "mingw-debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "mingw-release"
+    }
+  ]
+}
